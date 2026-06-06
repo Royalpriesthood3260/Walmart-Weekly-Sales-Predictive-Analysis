@@ -18,12 +18,6 @@
  
 ---
  
-## 🌐 Published Report
- 
-> **View the full report on RPubs:** [Walmart Weekly Sales — Predictive Analysis](https://rpubs.com/Priesthood162002/1439381)
- 
----
- 
 ## 🗂️ Dataset
  
 - **Source:** [Kaggle — Walmart Store Sales Forecasting](https://www.kaggle.com/datasets/mikhail1681/walmart-sales)
