@@ -1,0 +1,540 @@
+---
+title: "Walmart Weekly Sales Predictive Analysis"
+author: "Royalpriesthood Olola"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+  pdf_document: default
+---
+
+# Packages
+
+```{r}
+pkgs <- c(
+  "tidyverse",    
+  "lubridate",    
+  "scales",       
+  "corrplot",     
+  "ggridges",    
+  "patchwork",    
+  "caret",        
+  "randomForest", 
+  "xgboost",     
+  "Metrics",      
+  "car", 
+  "lmtest",
+  "knitr"
+)
+invisible(lapply(pkgs, function(p) {
+  if (!requireNamespace(p, quietly = TRUE)) install.packages(p, repos = "https://cloud.r-project.org")
+  library(p, character.only = TRUE)
+}))
+```
+
+# Data loading & Cleaning
+
+```{r}
+raw <- read.csv("Walmart.csv", stringsAsFactors = FALSE)  # load dataset without auto-factors
+
+df <- raw %>%
+  mutate(
+    Date         = dmy(Date),  # convert to proper date format
+    Year         = year(Date),  # extract year
+    Month        = month(Date, label = TRUE, abbr = TRUE),  # month name (short)
+    Month_num    = month(Date),  # numeric month (1–12)
+    Week         = isoweek(Date),  # ISO week number
+    Quarter      = quarter(Date),  # quarter of year (1–4)
+    Holiday_Flag = factor(Holiday_Flag, levels = c(0, 1),
+                          labels = c("Non-Holiday", "Holiday")),  # convert to readable categories
+    Store        = factor(Store)  # treat store as categorical variable
+  )
+```
+
+```{r}
+glimpse(df)
+```
+
+```{r}
+summary(df)
+```
+
+# EDA
+
+```{r}
+BLUE   <- "#0071CE"
+YELLOW <- "#FFC220"
+RED    <- "#E04B2A"
+ 
+theme_walmart <- theme_minimal(base_size = 13) +
+  theme(
+    plot.title       = element_text(face = "bold", size = 15, colour = BLUE),
+    plot.subtitle    = element_text(colour = "grey45", size = 11),
+    panel.grid.minor = element_blank(),
+    axis.title       = element_text(colour = "grey30"),
+    legend.position  = "bottom",
+    plot.background  = element_rect(fill = "#FAFAFA", colour = NA),
+    panel.background = element_rect(fill = "#FAFAFA", colour = NA)
+  )
+ 
+sales_y <- scale_y_continuous(labels = label_dollar(suffix = "M"))
+```
+
+### 1. Distribution of Weekly Sales
+
+```{r}
+p_dist <- ggplot(df, aes(Weekly_Sales / 1e6)) +
+  geom_histogram(aes(y = after_stat(density)), bins = 60,
+                 fill = BLUE, colour = "white", linewidth = 0.2) +
+  geom_density(colour = YELLOW, linewidth = 1) +
+  scale_x_continuous(labels = label_dollar(suffix = "M")) +
+  labs(title    = "Distribution of Weekly Sales",
+       subtitle = "Right-skewed; large stores pull the tail",
+       x = "Weekly Sales (USD Millions)", y = "Density") +
+  theme_walmart
+
+print(p_dist)
+```
+
+Most stores fall between **\$500K–\$1.5M/week** with a few large stores pushing the tail toward **\$3.8M**.
+
+### 2. Sales over time (all stores aggregated)
+
+```{r}
+time_sales <- df %>%
+  group_by(Date) %>%
+  summarise(Total_Sales = sum(Weekly_Sales) / 1e6, .groups = "drop")
+ 
+p_time <- ggplot(time_sales, aes(Date, Total_Sales)) +
+  geom_line(colour = BLUE, linewidth = 0.7) +
+  geom_smooth(method = "loess", span = 0.2, colour = YELLOW, se = FALSE) +
+  sales_y +
+  labs(title    = "Total Weekly Sales Over Time (All 45 Stores)",
+       subtitle = "Loess trend in yellow — clear seasonality & holiday spikes",
+       x = NULL, y = "Total Sales (USD M)") +
+  theme_walmart
+
+print(p_time)
+```
+
+Sales spike every **November–December** and stay relatively **flat** the rest of the year.
+
+### 3. Holiday vs Non-Holiday boxplot
+
+```{r}
+p_holiday <- ggplot(df, aes(Holiday_Flag, Weekly_Sales / 1e6, fill = Holiday_Flag)) +
+  geom_boxplot(outlier.colour = RED, outlier.size = 0.7, width = 0.5) +
+  scale_fill_manual(values = c("Non-Holiday" = BLUE, "Holiday" = YELLOW)) +
+  sales_y +
+  labs(title = "Weekly Sales: Holiday vs Non-Holiday",
+       x = NULL, y = "Weekly Sales (USD M)", fill = NULL) +
+  theme_walmart + theme(legend.position = "none")
+
+print(p_holiday)
+```
+
+Holiday weeks generally produce slightly higher **sales** than non-holiday weeks. The difference is not dramatic, but **holiday periods** appear to reduce the likelihood of particularly poor sales weeks.
+
+### 4. Monthly ridge plot
+
+```{r}
+p_month <- ggplot(df, aes(Weekly_Sales / 1e6, Month, fill = after_stat(x))) +
+  geom_density_ridges_gradient(scale = 2.5, rel_min_height = 0.01,
+                               colour = "white", linewidth = 0.3) +
+  scale_fill_gradient(low = "#cce4f6", high = BLUE) +
+  scale_x_continuous(labels = label_dollar(suffix = "M")) +
+  labs(title    = "Sales Distribution by Month",
+       subtitle = "November & December drive the highest peaks",
+       x = "Weekly Sales (USD M)", y = NULL) +
+  theme_walmart + theme(legend.position = "none")
+
+print(p_month)
+```
+
+**November** and **December** shift clearly to the right while **January** drops back down as the weakest month.
+
+### 5. Top-10 stores by average weekly sales
+
+```{r}
+top10 <- df %>%
+  group_by(Store) %>%
+  summarise(Avg_Sales = mean(Weekly_Sales) / 1e6, .groups = "drop") %>%
+  slice_max(Avg_Sales, n = 10)
+ 
+p_top10 <- ggplot(top10, aes(reorder(Store, Avg_Sales), Avg_Sales)) +
+  geom_col(fill = BLUE, width = 0.7) +
+  geom_text(aes(label = dollar(Avg_Sales, suffix = "M", accuracy = 0.01)),
+            hjust = -0.1, size = 3.5, colour = "grey20") +
+  coord_flip() +
+  scale_y_continuous(labels = label_dollar(suffix = "M"),
+                     expand = expansion(mult = c(0, 0.15))) +
+  labs(title = "Top 10 Stores by Average Weekly Sales",
+       x = "Store", y = "Avg Weekly Sales (USD M)") +
+  theme_walmart
+
+print(p_top10)
+```
+
+Store **20** leads at **\$2.1M/week**, nearly double the overall **average**, with a wide gap between the top stores and the rest.
+
+### 6. Scatter plots: predictors vs sales
+
+```{r}
+scatter_vs_sales <- function(xvar, xlabel) {
+  ggplot(df, aes(.data[[xvar]], Weekly_Sales / 1e6)) +
+    geom_point(alpha = 0.2, colour = BLUE, size = 0.8) +
+    geom_smooth(method = "lm", colour = RED, se = TRUE) +
+    sales_y +
+    labs(title = paste(xlabel, "vs Sales"), x = xlabel, y = "Weekly Sales (M)") +
+    theme_walmart
+}
+ 
+p_scatter_temp <- ggplot(df, aes(Temperature, Weekly_Sales / 1e6, colour = Holiday_Flag)) +
+  geom_point(alpha = 0.3, size = 0.8) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 1) +
+  scale_colour_manual(values = c("Non-Holiday" = BLUE, "Holiday" = RED)) +
+  sales_y +
+  labs(title = "Temperature vs Sales", x = "°F", y = "Weekly Sales (M)", colour = NULL) +
+  theme_walmart + theme(legend.position = "top")
+ 
+p_scatter_fuel  <- scatter_vs_sales("Fuel_Price",   "Fuel Price (USD)")
+p_scatter_unemp <- scatter_vs_sales("Unemployment", "Unemployment Rate (%)")
+p_scatter_cpi   <- scatter_vs_sales("CPI",          "Consumer Price Index")
+
+print(p_scatter_temp)
+print(p_scatter_fuel)
+print(p_scatter_unemp)
+print(p_scatter_cpi)
+```
+
+Unemployment and **CPI** show a slight downward slope. **Fuel Price** is completely flat with no relationship to **sales**.
+
+### 7. Correlation matrix (numeric features only)
+
+```{r}
+cor_mat <- df %>%
+  select(Weekly_Sales, Temperature, Fuel_Price, CPI, Unemployment, Month_num, Week, Year) %>%
+  rename(Sales = Weekly_Sales, Temp = Temperature, Fuel = Fuel_Price, Month = Month_num) %>%
+  cor()
+
+
+corrplot(
+  cor_mat,
+  method = "color",
+  type = "upper",
+  addCoef.col = "black"
+)
+```
+
+**No Economic variable** has a strong relationship with **sales**. The strongest is **Unemployment** at **-0.11**, but this is still **weak**. **Fuel Price** is almost **zero** at **0.01**, meaning it has no real relationship with sales. The high **Fuel Price vs Year correlation (0.78)** just reflects that fuel prices increased steadily from **2010 to 2012**, not that fuel is driving sales.
+
+# Statistical Analysis
+
+### 1. Descriptive statistics
+
+```{r}
+summary(df %>% select(Weekly_Sales, Temperature, Fuel_Price, CPI, Unemployment))
+```
+
+- **Weekly Sales**: Very wide range (\$210K–\$3.82M). Mean (\$1.05M) is higher than median (\$961K), showing a **right-skew** from a few very high-performing stores.
+
+- **Temperature**: Ranges from -2°F to 100°F, covering different climates and seasons. Average is about **61°F**.
+
+- **Fuel Price**: Ranges from \$2.47 to \$4.47, averaging around **\$3.36**, reflecting changing economic conditions over time.
+
+- **CPI**: Ranges from 126 to 227, showing **inflation differences** across time and regions that may affect spending.
+
+- **Unemployment**: Ranges from 3.88% to 14.31%, capturing both strong and weak economic periods that can influence retail sales.
+
+### 2. Welch t-test: Holiday vs Non-Holiday
+
+```{r}
+t.test(Weekly_Sales ~ Holiday_Flag, data = df)
+```
+
+- **t-test result**: t = -2.68, p = 0.0076 shows a **statistically significant difference** in mean Weekly Sales between holiday and non-holiday weeks
+
+- **Mean sales**: Non-holiday ≈ \$1.04M vs Holiday ≈ \$1.12M → **holiday weeks have higher sales**
+
+- **Confidence interval**: consistently negative for (Non-holiday − Holiday), confirming **higher holiday sales**
+
+### 3. One-way ANOVA: Sales by Quarter
+
+```{r}
+summary(aov(Weekly_Sales ~ factor(Quarter), data = df))
+```
+
+The **ANOVA test** shows that **Quarter has a significant effect** on Weekly Sales (F = 13.57, p = 8.01e-09), meaning sales are different in at least one quarter compared to the others. Most of the variation is still in the **residuals**, but the result still shows clear **seasonal differences** in sales across quarters.
+
+### 4. Pearson correlations vs Weekly Sales
+
+```{r}
+sapply(c("Temperature", "Fuel_Price", "CPI", "Unemployment"), function(v) {
+  ct <- cor.test(df$Weekly_Sales, df[[v]])
+  c(r = round(ct$estimate, 4), p = round(ct$p.value, 4))
+})
+```
+
+**Temperature** (r = -0.0638, **p \< 0.001**), **CPI** (r = -0.0726, **p \< 0.001**), and **Unemployment** (r = -0.1062, **p \< 0.001**) all show **statistically significant but very weak negative correlations** with Weekly Sales, meaning higher values in these variables are slightly associated with lower sales. **Fuel Price** has **no significant relationship** with Weekly Sales (r = 0.0095, p = 0.4478), indicating no meaningful linear effect.
+
+### 5 STL decomposition — Store 1 as representative example
+
+```{r}
+store1_ts <- df %>%
+  filter(Store == 1) %>%
+  arrange(Date) %>%
+  pull(Weekly_Sales)
+ 
+ts_obj <- ts(store1_ts, frequency = 52, start = c(2010, 6))
+decomp  <- stl(ts_obj, s.window = "periodic")
+ 
+plot(decomp, main = "STL Decomposition — Store 1 Weekly Sales")
+```
+
+The STL decomposition for Store 1 confirms a high degree of seasonality that aligns with the ANOVA findings. The **seasonal panel** reveals distinct, recurring peaks—most notably during the end-of-year holidays—which explains the significant quarterly effect. However, the **remainder panel** shows frequent, high-magnitude fluctuations, validating the observation that while seasonality is statistically significant, a large portion of weekly sales variance remains driven by non-seasonal factors.
+
+- **The Holiday Spikes:** Point out those two massive spikes around 2011.0 and 2012.0. Those are likely Black Friday/Christmas. This is exactly what is driving your "Quarterly" significance.
+
+- **The Growth Trend:** Notice the **Trend** line is a smooth upward slope. You can mention that Store 1 isn't just seasonal; its baseline performance is actually improving over time.
+
+- **The Gray Bars (Scale Check):** Looking at the gray bars on the right of each panel. The bar for the **Seasonal** panel is much smaller than the one for the **Data** panel. This means that while seasonality is "real" (significant), it only accounts for a fraction of the total movement in sales. This perfectly supports your earlier sentence about "residual variation being much larger."
+
+# Feature Engineering & Train / Test Split
+
+```{r}
+df <- df %>%
+  mutate(
+    Is_Holiday = as.integer(Holiday_Flag == "Holiday"),
+    Is_Q4      = as.integer(Quarter == 4),
+    Is_Nov_Dec = as.integer(Month_num %in% c(11, 12)),
+    Log_Sales  = log(Weekly_Sales))
+ 
+
+train <- df %>% filter(Year <= 2011)
+test  <- df %>% filter(Year == 2012)
+test  <- test %>% filter(Store %in% unique(train$Store))
+ 
+cat(sprintf("Train: %d rows | Test: %d rows\n", nrow(train), nrow(test)))
+ 
+FEATURES   <- c("Store", "Is_Holiday", "Is_Q4", "Is_Nov_Dec",
+                "Temperature", "Fuel_Price", "CPI", "Unemployment",
+                "Month_num", "Week", "Year")
+formula_lm <- as.formula(paste("Log_Sales ~", paste(FEATURES, collapse = " + ")))
+```
+
+```{r}
+evaluate_model <- function(name, actuals_log, preds_log) {
+  actuals <- exp(actuals_log)
+  preds   <- exp(preds_log)
+  ss_res  <- sum((actuals - preds)^2)
+  ss_tot  <- sum((actuals - mean(actuals))^2)
+  list(
+    Model    = name,
+    RMSE_USD = round(sqrt(mean((actuals - preds)^2))),
+    MAE_USD  = round(mean(abs(actuals - preds))),
+    R2       = round(1 - ss_res / ss_tot, 4)
+  )
+}
+```
+
+# Models
+
+### 1. Linear Regression
+
+```{r}
+lm_model <- lm(formula_lm, data = train)
+summary(lm_model)
+```
+
+The model explains **96% of the variation in sales**, mostly driven by the **store dummy variables** and **seasonal flags**.
+
+```{r}
+knitr::kable(vif(lm_model))
+```
+
+Although several variables showed high **VIF values**, indicating **multicollinearity**, this was expected due to overlapping time-based variables and store dummy variables. Since the primary goal of the model was **prediction rather than coefficient interpretation**, and the model demonstrated **strong performance**, the variables were retained instead of removed.
+
+```{r}
+bptest(lm_model)
+```
+
+The **Breusch–Pagan test indicates heteroscedasticity (p \< 2.2e-16)**, meaning error variance is not constant across observations, bigger stores tend to have larger prediction errors.
+
+```{r}
+dwtest(lm_model)
+```
+
+The **Durbin–Watson test (DW = 1.44, p \< 2.2e-16)** tells some autocorrelation present, nearby weeks tend to have correlated errors.
+
+```{r}
+lm_preds <- predict(lm_model, newdata = test)
+res_lm   <- evaluate_model("Linear Regression", test$Log_Sales, lm_preds)
+```
+
+```{r}
+plot(lm_model, col = BLUE, pch = 16, cex = 0.5)
+```
+
+The **first plot** shows that the model is doing a **decent job** because the points are mostly spread randomly around the line, although there are a few **outliers**. The **second plot** shows that the residuals are not **normally distributed**, since the points move far away from the straight line, which is the main problem with the model. The **third plot** suggests that the spread of errors is mostly **consistent**, so the variance assumption is mostly fine. The **fourth plot** shows that there are some **unusual data points**, but none are strong enough to completely affect or ruin the model.
+
+### 2. Stepwise Linear Regression
+
+```{r}
+step_model <- step(lm_model, direction = "backward", trace = 0)
+```
+
+```{r}
+# Stepwise Model Summary
+summary(step_model)
+```
+
+```{r}
+kept    <- names(coef(step_model))
+dropped <- setdiff(names(coef(lm_model)), kept)
+cat("Features dropped by stepwise:", paste(dropped, collapse = ", "), "\n")
+```
+
+```{r}
+step_preds <- predict(step_model, newdata = test)
+res_step   <- evaluate_model("Stepwise LM", test$Log_Sales, step_preds)
+```
+
+The **stepwise regression model** retained **all predictors**, resulting in the same model as the original linear regression. This suggests that each variable contributed **useful predictive information** to the model. The model achieved an **adjusted R² of 0.9614**, indicating **excellent predictive performance**, with approximately **96% of the variation in log weekly sales** explained by the predictors.
+
+### 3. Random Forest
+
+```{r}
+set.seed(42)
+rf_model <- randomForest(
+  formula_lm,
+  data       = train,
+  ntree      = 300,
+  mtry       = 4,
+  importance = TRUE,
+  nodesize   = 5
+)
+ 
+rf_model
+```
+
+The **Random Forest model** did an **excellent job** predicting the results because it had very low errors and was able to explain about **98%** of the changes in the data.
+
+```{r}
+rf_preds <- predict(rf_model, newdata = test)
+res_rf   <- evaluate_model("Random Forest", test$Log_Sales, rf_preds)
+```
+
+```{r}
+imp_df <- importance(rf_model) %>%
+  as.data.frame() %>%
+  rownames_to_column("Feature") %>%
+  arrange(desc(`%IncMSE`)) %>%
+  head(10)
+```
+
+```{r}
+p_imp <- ggplot(imp_df, aes(reorder(Feature, `%IncMSE`), `%IncMSE`)) +
+  geom_col(fill = BLUE, width = 0.7) +
+  geom_text(aes(label = round(`%IncMSE`, 1)), hjust = -0.2, size = 3.5, colour = "grey20") +
+  coord_flip() +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+  labs(title = "Random Forest — Top 10 Feature Importance",
+       x = NULL, y = "% Increase in MSE") +
+  theme_walmart
+print(p_imp)
+```
+
+**Store** dominates every other variable by a wide margin, making it the **strongest predictor** of Weekly Sales. **Week** comes in second, showing that **seasonality** still plays a major role. **Unemployment** and **CPI** rank surprisingly high, suggesting that **economic conditions** matter more to the model than the simple correlations implied. Meanwhile, Fuel Price, Temperature, Holiday status, and other calendar variables contribute useful information but have a **much smaller impact** on predictions.
+
+### 4. XGBOOST
+
+```{r}
+X_train <- model.matrix(formula_lm, data = train)[, -1]
+X_test  <- model.matrix(formula_lm, data = test)[, -1]
+y_train <- train$Log_Sales
+y_test  <- test$Log_Sales
+```
+
+```{r}
+set.seed(42)
+xgb_model <- xgb.train(
+  params = list(objective = "reg:squarederror", eta = 0.05,
+                max_depth = 5, subsample = 0.8),
+  data                  = xgb.DMatrix(X_train, label = y_train),
+  nrounds               = 300,
+  watchlist             = list(test = xgb.DMatrix(X_test, label = y_test)),
+  early_stopping_rounds = 30,
+  print_every_n         = 50,
+  verbose               = 0
+)
+```
+
+```{r}
+xgb_preds <- predict(xgb_model, xgb.DMatrix(X_test))
+res_xgb   <- evaluate_model("XGBoost", y_test, xgb_preds)
+```
+
+```{r fig.width=9, fig.height=5}
+# Actual vs Predicted — XGBoost
+avp_df <- tibble(
+  Actual    = exp(y_test) / 1e6,
+  Predicted = exp(xgb_preds) / 1e6
+)
+ 
+p_avp <- ggplot(avp_df, aes(Actual, Predicted)) +
+  geom_point(alpha = 0.3, colour = BLUE, size = 1) +
+  geom_abline(slope = 1, intercept = 0, colour = RED, linewidth = 1) +
+  scale_x_continuous(labels = label_dollar(suffix = "M")) +
+  sales_y +
+  labs(title = "XGBoost — Actual vs Predicted",
+       x = "Actual (USD M)", y = "Predicted (USD M)") +
+  theme_walmart
+print(p_avp)
+ 
+ 
+# Residuals plot
+resid_df <- tibble(
+  Fitted   = exp(xgb_preds) / 1e6,
+  Residual = (exp(y_test) - exp(xgb_preds)) / 1e6
+)
+ 
+p_resid <- ggplot(resid_df, aes(Fitted, Residual)) +
+  geom_point(alpha = 0.3, colour = BLUE, size = 0.9) +
+  geom_hline(yintercept = 0, colour = RED, linewidth = 1) +
+  geom_smooth(method = "loess", se = FALSE, colour = YELLOW) +
+  scale_x_continuous(labels = label_dollar(suffix = "M")) +
+  sales_y +
+  labs(title = "XGBoost — Residuals vs Fitted",
+       x = "Fitted (USD M)", y = "Residuals (USD M)") +
+  theme_walmart
+print(p_resid)
+```
+
+**Actual vs Predicted**
+
+- The dots follow the red diagonal closely from \$0.25M up to around \$1.5M, but above that the spread widens and the model starts **under-predicting** — the higher the actual sales, the harder it is for XGBoost to nail it.
+
+**Residuals vs Fitted**
+
+- The yellow line stays near zero for lower-sales stores but curves upward past \$1M, meaning the model consistently **under-predicts** the **higher-volume stores** — that's the main **weakness** here.
+
+# Result of all Model
+
+```{r}
+# Result of all Model
+results <- bind_rows(res_lm, res_step, res_rf, res_xgb)
+knitr::kable(results, digits = 4)
+```
+
+The **linear regression and stepwise models** tied for the best overall performance. This is because the **store dummy variables** captured each store’s baseline sales so well that the tree models couldn’t really improve on it.
+
+- **Linear Regression & Stepwise LM:** RMSE = \$107K, MAE = \$76K, R² = 0.9596 — best performing models, identical results since stepwise kept all features
+
+- **XGBoost:** RMSE = \$155K, MAE = \$103K, R² = 0.9159 — best tree model, slightly better than Random Forest because it fixes errors step by step
+
+- **Random Forest:** RMSE = \$163K, MAE = \$108K, R² = 0.9074 — a bit weaker than XGBoost but still explains over 90% of the variation
+
+# Conclusion
+
+All four models performed well with **R² above 90%**, showing that weekly sales are very predictable when you know the **store** and the **time of year**. The linear regression did best, which makes sense because it already learned each store’s normal sales pattern from the training data and applied it to 2012. **XGBoost** did better than **Random Forest** because it fixes mistakes step by step instead of averaging many trees. The feature importance plot shows the main driver is clearly the **store**, with **week of the year** next, while economic factors matter much less. Overall, the results show that just knowing the store and season is enough to predict sales pretty well.
