@@ -14,7 +14,7 @@
  
 > Variables include store identity, holiday flags, temperature, fuel price, CPI, unemployment, and engineered time features. The target variable is `Weekly_Sales`, log-transformed before modeling to correct for right skew.
  
-> The goal is not just prediction accuracy — it's understanding what actually drives retail sales. Which factors matter most? Which common assumptions about economic conditions hold up in the data?
+> The goal is not just prediction accuracy it's understanding what actually drives retail sales. Which factors matter most? Which common assumptions about economic conditions hold up in the data?
  
 ---
  
@@ -103,8 +103,8 @@ Raw Data → Cleaning → EDA → Statistical Tests
  
 | Test | Result | Finding |
 |---|---|---|
-| Descriptive Stats | Mean ($1.05M) > Median ($961K) | Right skew confirmed — a handful of high-volume stores pull the average up |
-| Welch T-Test | t = -2.68, p = 0.0076 | Holiday weeks average **$1.12M vs $1.04M** — the difference is statistically real |
+| Descriptive Stats | Mean ($1.05M) > Median ($961K) | Right skew confirmed a handful of high-volume stores pull the average up |
+| Welch T-Test | t = -2.68, p = 0.0076 | Holiday weeks average **$1.12M vs $1.04M** the difference is statistically real |
 | One-Way ANOVA | F = 13.57, p < 0.001 | At least one quarter has significantly different sales. **Q4 drives this result** |
 | Pearson Correlations | Unemployment r = -0.106 ✅, Fuel Price r = 0.009 ❌ | Economic variables are weak predictors. **Fuel Price has no significant relationship** with sales |
 | STL Decomposition | Clear annual peaks, slight upward trend (Store 1) | Seasonality is real but the large remainder confirms **non-seasonal factors explain most variation** |
@@ -117,9 +117,9 @@ Run on the linear regression model to check whether core assumptions held up.
  
 | Test | Result | What It Means |
 |---|---|---|
-| VIF Check | Several high values | Expected due to overlapping time features and 44 store dummies — kept since goal is prediction not interpretation |
-| Breusch-Pagan | p < 2.2e-16 | Heteroscedasticity confirmed — bigger stores have larger errors |
-| Durbin-Watson | DW = 1.44, p < 2.2e-16 | Autocorrelation present — nearby weeks influence each other |
+| VIF Check | Several high values | Expected due to overlapping time features and 44 store dummies kept since goal is prediction not interpretation |
+| Breusch-Pagan | p < 2.2e-16 | Heteroscedasticity confirmed bigger stores have larger errors |
+| Durbin-Watson | DW = 1.44, p < 2.2e-16 | Autocorrelation present nearby weeks influence each other |
 | Residuals vs Fitted | Mostly random scatter | Model fits well overall with a few outliers |
 | Q-Q Plot | Tails deviate from normal | Residuals aren't perfectly normal, driven by high-volume stores |
 | Scale-Location | Spread mostly consistent | Variance assumption reasonably met |
@@ -138,11 +138,11 @@ All models trained on 2010–2011 and evaluated on a held-out 2012 test set (~1,
 | XGBoost | $155,633 | $103,786 | 0.9159 |
 | Random Forest | $163,287 | $108,039 | 0.9074 |
  
-> ⭐ **Linear Regression and Stepwise LM** tied for best. Stepwise retained all features — confirming the original feature set was already well chosen. All four models exceeded **R² = 0.90**.
+> ⭐ **Linear Regression and Stepwise LM** tied for best. Stepwise retained all features confirming the original feature set was already well chosen. All four models exceeded **R² = 0.90**.
  
 **Why did Linear Regression beat the tree models?**
  
-When `Store` is passed in as a categorical variable with 45 levels, R automatically creates **44 store dummy variables** behind the scenes — giving the model a separate baseline for each store's typical sales. That per-store starting point is hard for tree models to replicate cleanly, since Random Forest and XGBoost have to figure out store-level patterns through splits rather than having them handed over directly.
+When `Store` is passed in as a categorical variable with 45 levels, R automatically creates **44 store dummy variables** behind the scenes giving the model a separate baseline for each store's typical sales. That per-store starting point is hard for tree models to replicate cleanly, since Random Forest and XGBoost have to figure out store-level patterns through splits rather than having them handed over directly.
  
 **Metrics explained:**
 - **RMSE** — average prediction error in dollars, penalises large mistakes more heavily
@@ -152,17 +152,17 @@ When `Store` is passed in as a categorical variable with 45 levels, R automatica
  
 ## 🔍 Key Findings
  
-- 🏪 **Store identity** is the single strongest predictor — dominates the RF feature importance chart by a massive margin
-- 📅 **Week of the year** is the second most important feature — confirming seasonality is the other major driver
-- 🎄 **Holiday weeks** produce a real but modest boost — statistically significant (p = 0.0076)
+- 🏪 **Store identity** is the single strongest predictor that dominates the RF feature importance chart by a massive margin
+- 📅 **Week of the year** is the second most important feature confirming seasonality is the other major driver
+- 🎄 **Holiday weeks** produce a real but modest boost statistically significant (p = 0.0076)
 - 📉 **Unemployment and CPI** rank surprisingly high in RF feature importance despite weak individual correlations
-- ⛽ **Fuel Price** is the weakest variable across every analysis — no significant relationship with sales (r = 0.009, p = 0.45)
+- ⛽ **Fuel Price** is the weakest variable across every analysis. No significant relationship with sales (r = 0.009, p = 0.45)
 - 📈 **XGBoost** outperformed Random Forest (R² 0.9159 vs 0.9074) by correcting errors step by step rather than averaging independent trees
 ---
  
 ## 📌 Project Summary
  
-This project predicts weekly sales across 45 Walmart stores using four regression models — linear regression, stepwise regression, random forest, and XGBoost — applied to data from February 2010 to October 2012. Models were trained on 2010–2011 and tested on 2012 to prevent data leakage, with the linear model coming out on top at R² = 0.9596.
+This project predicts weekly sales across 45 Walmart stores using four regression models. linear regression, stepwise regression, random forest, and XGBoost applied to data from February 2010 to October 2012. Models were trained on 2010–2011 and tested on 2012 to prevent data leakage, with the linear model coming out on top at R² = 0.9596.
  
 The main finding is straightforward: **which store it is and what time of year it is explain most of the variation in sales.** Economic variables like fuel price turned out to have almost no relationship with sales at all. All four models exceeded R² = 0.90, showing that weekly retail sales are highly predictable once you account for store identity and seasonality.
  
@@ -170,12 +170,12 @@ The main finding is straightforward: **which store it is and what time of year i
  
 ## ⚠️ Limitations
  
-- The model was trained on 2010–2012, a fairly stable economic stretch. It hasn't seen a major recession, supply disruption, or a shift in how people shop — so predictions outside that window should be treated with caution.
-- The Breusch-Pagan test confirmed heteroscedasticity (p < 2.2e-16) — meaning the model's prediction errors get larger as store volume goes up. It's most reliable in the middle of the sales range, less so at the high end.
-- The Durbin-Watson test (DW = 1.44, p < 2.2e-16) flagged autocorrelation — sales in one week are influenced by the week before. A time-series model like ARIMA or Prophet would handle this more directly.
-- Each store gets its own coefficient, so add a new store and the model has no reference point for it. It learned *who* each store is, not *why* stores perform differently.
-- There's no data on store size, local demographics, nearby competitors, or promotions — all of which likely explain a good chunk of the variation between stores.
-- Several variables overlap (time features especially), so VIF values came back high. The model is built for prediction — reading too much into individual coefficients would be misleading.
+- The model was trained on 2010–2012, a fairly stable economic stretch. It hasn't seen a major recession, supply disruption, or a shift in how people shop so predictions outside that window should be treated with caution.
+- The Breusch-Pagan test confirmed heteroscedasticity (p < 2.2e-16) meaning the model's prediction errors get larger as store volume goes up. It's most reliable in the middle of the sales range, less so at the high end.
+- The Durbin-Watson test (DW = 1.44, p < 2.2e-16) flagged autocorrelation sales in one week are influenced by the week before. A time-series model like ARIMA or Prophet would handle this more directly.
+- Each store gets its own coefficient, so add a new store and the model has no reference point for it.
+- There's no data on store size, local demographics, nearby competitors, or promotions all of which likely explain a good chunk of the variation between stores.
+- Several variables overlap (time features especially), so VIF values came back high. The model is built for prediction reading too much into individual coefficients would be misleading.
 ---
  
 ## ▶️ How to Run
