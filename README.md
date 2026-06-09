@@ -170,7 +170,7 @@ The main finding is straightforward: **which store it is and what time of year i
  
 ## ⚠️ Limitations
  
-- The model was trained on 2010–2012, a fairly stable economic stretch. It hasn't seen a major recession, supply disruption, or a shift in how people shop so predictions outside that window should be treated with caution.
+- The model was trained on 2010–2011 data and tested on 2012 — a fairly stable post-recession economic stretch. It hasn’t seen a major recession, supply disruption, or a shift in consumer behavior, so predictions outside that window should be treated with caution.
 - The Breusch-Pagan test confirmed heteroscedasticity (p < 2.2e-16) meaning the model's prediction errors get larger as store volume goes up. It's most reliable in the middle of the sales range, less so at the high end.
 - The Durbin-Watson test (DW = 1.44, p < 2.2e-16) flagged autocorrelation sales in one week are influenced by the week before. A time-series model like ARIMA or Prophet would handle this more directly.
 - Each store gets its own coefficient, so add a new store and the model has no reference point for it.
